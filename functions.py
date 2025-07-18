@@ -359,6 +359,180 @@ def estimate_returns(df):
     return df
 
 
+#------ Main function to fetch the data from the internet and perform indicators calculation
+def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
+    """
+    Description: gets the data from the web and calculates its indicators
+
+    Input: days (int), timespan of data to fetch. Defaults to 30;
+            interval (str), may be days, weeks, minutes, whatever, check Binance API documentation. Defaults to '1d';
+            rsi (int), time window for the RSI indicator. Defaults to 20;
+            bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
+            roll (int), rolling window for moving average. Defaults to 13.
+    """
+    import numpy as np
+    import pandas as pd
+    import pandas_ta
+    
+    # First of all, fetch pairs local file in order to know what assets to perform the calculations
+    print('Checking for trading pairs...')
+    check_pairs()
+    print('Loading pairs.')
+    pairs = get_pairs()
+    print('Pairs successfully loaded.')
+
+    # Then, get the historical data from Binance
+    # Params
+    df = pd.DataFrame()
+    past_days = days
+    interv = interval
+
+    for asset in pairs['Sell']:
+        temp = historical_data(ticker=asset, days=past_days, interval=interv)
+        df = pd.concat([df, temp])
+        del temp
+
+    # Up until here I've got a 'df' object with the historical data and my trading pairs file loaded into 'pairs' object.
+    # Let's calculate some indicators now
+
+    print('Calculating RSI (momentum).')
+    # Calculating Relative Strenght Index (RSI) - momentum indicator
+    # The RSI indicator won't be standardized for its use in clustering
+    df['rsi'] = df.groupby(level=0)['close'].transform(lambda x: pandas_ta.rsi(close=x, length=rsi))
+    #df.xs('BTCUSDT', level=0)['rsi'].plot() # to check if it's worked just uncomment the beginning of this line
+
+    print('Calculating Bollinger Bands (vol).')
+    # Calculating Bollinger Bands - volatility indicator (overbought/oversold)
+    df['bb_low'] = df.groupby(level=0)['close'].transform(lambda x: pandas_ta.bbands(close=np.log1p(x), length=bbands).iloc[:,0])
+    df['bb_mid'] = df.groupby(level=0)['close'].transform(lambda x: pandas_ta.bbands(close=np.log1p(x), length=bbands).iloc[:,1])
+    df['bb_high'] = df.groupby(level=0)['close'].transform(lambda x: pandas_ta.bbands(close=np.log1p(x), length=bbands).iloc[:,2])
+
+    print('Calculating ATR (vol).')
+    # Average True Range (ATR) - volatility indicator
+    # Since this function uses 3 features to compute the indicator (high, low, close), it is needed to use 'apply' instead of 'transform',
+    # and for that a custom function is needed (check it in Functions section).
+    df['atr'] = df.groupby(level=0, group_keys=False).apply(atr_calc)
+
+    print('Calculating MACD (momentum).')
+    # Moving Average Convergence-Divergence (MACD) - momentum indicator
+    # Same reasonig as ATR, a custom function is needed here.
+    df['macd'] = df.groupby(level=0, group_keys=False).apply(macd_calc).iloc[:,0]
+
+    print('Calculating dollar volume in millions.')
+    # Dollar volume (based on closing price), divided by 1mil
+    df['dollar_vol'] = df['volume']*df['close']/1e6
+
+    print('Aggregating data to bi-weekly periods, filtering best cryptos.')
+    # Aggregate to bi-weekly level and filter N most market capped cryptos
+    indicators = [c for c in df.columns.unique() if c not in ['dollar_vol', 'open', 'high', 'low', 'volume']]
+    p_dvol = df.unstack(level=0)['dollar_vol'].resample('2W').mean().stack('asset').to_frame('dollar_vol')
+    p_indc = df.unstack(level=0)[indicators].resample('2W').last().stack('asset', future_stack=True)
+    df = pd.concat([p_dvol, p_indc], axis=1).dropna()
+
+    print('Creating dollar volume moving averages.')
+    # 13-week moving average of dollar volume for each asset
+    df['dollar_vol'] = df['dollar_vol'].unstack('asset').rolling(roll).mean().stack()
+
+    print('Checking cryptos liquidity.')
+    # Bi-weekly rank for each asset by dollar volume (a.k.a. liquidity), smaller rank is better (most liquid)
+    df['liquidity_lvl'] = df.groupby('time')['dollar_vol'].rank(ascending=False)
+
+    print('Creating a rank for the best cryptos in the dataset.')
+    # Top 15 cryptos fortnightly, able to drop volume and liquidity features already
+    mask = df['liquidity_lvl'] < 16
+    df = df.loc[mask].drop(['dollar_vol', 'liquidity_lvl'], axis=1)
+
+    print('Estimating returns.')
+    df = df.groupby(level='asset', group_keys=False).apply(estimate_returns).dropna()
+
+    print('All good.')
+
+    return df
 
 
+#------ Function to estimate the optimal k value for clustering
+def clustering(df, max_k=10, cutoff=0.125, graph=False):
+    """
+    Description: estimates the optimal k value for clustering based on a cutoff value
 
+    Input: df (pandas Series or DataFrame), the values to perform the clustering analysis;
+            max_k (int), the maximum number of clusters. Defaults to 10;
+            cutoff (float), the percentage (in decimals) in change to evaluate. Defaults to 0.125;
+            graph (bool), whether plot a graph or not. Defaults to False
+
+    Output (conditional): df (pandas DataFrame), a clustered dataset
+    """
+    from sklearn.cluster import KMeans
+    import pandas as pd
+    
+    # Creates empty lists to store mean and intertia values
+    means = []
+    inertias = []
+
+    # Cycle through data to calculate means and inertias 
+    for k in range(1, max_k):
+        kmeans = KMeans(n_clusters=k)
+        kmeans.fit(pd.DataFrame(df))
+
+        means.append(k)
+        inertias.append(kmeans.inertia_)
+
+    # Creates a pandas DataFrame with the results
+    calc = pd.DataFrame([means, inertias], index=['Means', 'Inertia']).T
+
+    # Checks which inertias are under the cutoff value and defines the best k under this assumption
+    mask = (calc.Inertia / calc.Inertia[0]) < cutoff
+    opt_k = int(calc[mask].Means.min()) - 1
+    
+    if cutoff != 0.125:
+        print(f'Theoretical best k: {opt_k}, with change cutoff {cutoff}')
+    else:
+        print(f'Theoretical best k: {opt_k}, with default change cutoff value {cutoff}')
+
+    # Plot the elbow graph if graph param is set to True
+    if graph == True:
+        import matplotlib.pyplot as plt
+
+        fig = plt.subplots(figsize=(10,5))
+        plt.plot(means, inertias, 'o-')
+        plt.xlabel('Number of Clusters (k)')
+        plt.ylabel('Inertia')
+        plt.grid(True)
+        plt.show()
+        print(f'WARNING! Clustering not registered in the dataset. For it to be done, use hyperparameter "graph=False".')
+
+    else:
+        df['cluster_num'] = KMeans(n_clusters=opt_k,
+                            random_state=42,
+                            init='random').fit(df).labels_
+    
+        return df
+    
+
+#------ Clusters scatter plotting
+def plot_clusters(df, attr_1='atr', attr_2='rsi'):
+    """
+    Description: plots a scatterplot between two features from the already clustered dataset.
+
+    Input: df (pandas DataFrame), the data that passed by clustering functions already;
+            attr_1, attr_2 (str), two features from such dataset. Default to 'atr' and 'rsi', respectivelly.
+    """
+    import matplotlib.pyplot as plt
+
+    # In order to dynamize the plot, the script gets the colum number from this snippet
+    feats = pd.Series(df.columns)
+    mask_1 = feats == attr_1
+    ind_1 = int(feats[mask_1].index.values[0])
+    mask_2 = feats == attr_2
+    ind_2 = int(feats[mask_2].index.values[0])
+
+    # From the code above, runs the plot graph for each cluter
+    for i in df.cluster_num.value_counts().sort_index().index:
+        temp = df[df.cluster_num == i]
+        plt.scatter(temp.iloc[:,ind_1], temp.iloc[:,ind_2], label=f'cluster {i}')
+
+    # Finally effectively prints the plot
+    plt.grid(True)
+    plt.title(f'Plotting features {str.upper(attr_1)} x {str.upper(attr_2)}')
+    plt.legend()
+    plt.show()
