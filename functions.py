@@ -219,6 +219,7 @@ def check_pairs():
         # Creates a new temp DataFrame with just the pairs
         temp = pd.concat([buy_pairs, sell_pairs], axis=1)
         temp.columns = ['Buy', 'Sell']
+        temp.drop('USDCUSDT', inplace=True)
 
         # Saves to file
         print('Creating new file...')
@@ -359,20 +360,15 @@ def estimate_returns(df):
     return df
 
 
-#------ Main function to fetch the data from the internet and perform indicators calculation
-def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
+#------ Function to fetch the data from the internet
+def fetch_data(days=30, interval='1d'):
     """
     Description: gets the data from the web and calculates its indicators
 
     Input: days (int), timespan of data to fetch from Binance. Defaults to 30;
             interval (str), may be days, weeks, minutes, whatever, check Binance API documentation. Defaults to '1d';
-            rsi (int), time window for the RSI indicator. Defaults to 20;
-            bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
-            roll (int), rolling window for moving average. Defaults to 13.
     """
-    import numpy as np
     import pandas as pd
-    import pandas_ta
     
     # First of all, fetch pairs local file in order to know what assets to perform the calculations
     print('Checking for trading pairs...')
@@ -392,8 +388,21 @@ def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
         df = pd.concat([df, temp])
         del temp
 
-    # Up until here I've got a 'df' object with the historical data and my trading pairs file loaded into 'pairs' object.
-    # Let's calculate some indicators now
+    return df
+
+
+#------ Indicators function
+def estimate_indicators(df, rsi=20, bbands=20, roll=13):
+    """
+    Description: gets the data from the web and calculates its indicators
+
+    Input:  rsi (int), time window for the RSI indicator. Defaults to 20;
+            bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
+            roll (int), rolling window for moving average. Defaults to 13.
+    """
+    import pandas as pd
+    import pandas_ta
+    import numpy as np
 
     print('Calculating RSI (momentum).')
     # Calculating Relative Strenght Index (RSI) - momentum indicator
@@ -445,7 +454,7 @@ def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
     print('Estimating returns.')
     df = df.groupby(level='asset', group_keys=False).apply(estimate_returns).dropna()
 
-    print('All good.')
+    print('All indicators successfuly calculated.')
 
     return df
 
@@ -506,19 +515,33 @@ def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
 
 
 #------ Clustering itself
-def clustering(df, clusters=None):
+def clustering(df, metric='rsi', clusters=None):
     """
     Description: performs the clustering of the data, based on estimate_kmeans() results.
 
     Input: df (pandas DataFrame), the data to perform the clustering;
+            metric (str), metric to estimate the centroids. Defaults to 'rsi';
             clusters (int), either user-defined or the results from estimate_kmeans()
 
     Output: df (pandas DataFrame), the clustered DataFrame
     """
+    import pandas as pd
     from sklearn.cluster import KMeans
+    import numpy as np
+    
+    temp = pd.Series(df.columns == metric)
+    num = temp[temp.index == True].index[0]
+    feat = int(num)
+
+    # Set target values
+    target_values = [30, 45, 55, 70]
+
+    # Calculate centroids
+    centroids = np.zeros((len(target_values), len(df.columns)))
+    centroids[:, feat] = target_values
     
     df['cluster_num'] = KMeans(n_clusters=clusters,
-                               random_state=42,
+                               random_state=1,
                                init='random').fit(df).labels_
     
     return df
