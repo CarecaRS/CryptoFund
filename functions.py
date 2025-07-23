@@ -364,7 +364,7 @@ def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
     """
     Description: gets the data from the web and calculates its indicators
 
-    Input: days (int), timespan of data to fetch. Defaults to 30;
+    Input: days (int), timespan of data to fetch from Binance. Defaults to 30;
             interval (str), may be days, weeks, minutes, whatever, check Binance API documentation. Defaults to '1d';
             rsi (int), time window for the RSI indicator. Defaults to 20;
             bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
@@ -451,16 +451,16 @@ def fetch_data(days=30, interval='1d', rsi=20, bbands=20, roll=13):
 
 
 #------ Function to estimate the optimal k value for clustering
-def clustering(df, max_k=10, cutoff=0.125, graph=False):
+def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
     """
     Description: estimates the optimal k value for clustering based on a cutoff value
 
-    Input: df (pandas Series or DataFrame), the values to perform the clustering analysis;
+    Input: days (pandas Series or DataFrame), the values to perform the clustering analysis;
             max_k (int), the maximum number of clusters. Defaults to 10;
             cutoff (float), the percentage (in decimals) in change to evaluate. Defaults to 0.125;
             graph (bool), whether plot a graph or not. Defaults to False
 
-    Output (conditional): df (pandas DataFrame), a clustered dataset
+    Output: opt_k (int), the theorical optimum value of k
     """
     from sklearn.cluster import KMeans
     import pandas as pd
@@ -472,7 +472,7 @@ def clustering(df, max_k=10, cutoff=0.125, graph=False):
     # Cycle through data to calculate means and inertias 
     for k in range(1, max_k):
         kmeans = KMeans(n_clusters=k)
-        kmeans.fit(pd.DataFrame(df))
+        kmeans.fit(pd.DataFrame(data))
 
         means.append(k)
         inertias.append(kmeans.inertia_)
@@ -482,16 +482,16 @@ def clustering(df, max_k=10, cutoff=0.125, graph=False):
 
     # Checks which inertias are under the cutoff value and defines the best k under this assumption
     mask = (calc.Inertia / calc.Inertia[0]) < cutoff
-    opt_k = int(calc[mask].Means.min()) - 1
+    opt_k = int(calc[mask].Means.min())
     
-    if cutoff != 0.125:
-        print(f'Theoretical best k: {opt_k}, with change cutoff {cutoff}')
-    else:
-        print(f'Theoretical best k: {opt_k}, with default change cutoff value {cutoff}')
-
     # Plot the elbow graph if graph param is set to True
     if graph == True:
         import matplotlib.pyplot as plt
+
+        if cutoff != 0.125:
+            print(f'Theoretical best k: {opt_k}, with change cutoff {cutoff}')
+        else:
+            print(f'Theoretical best k: {opt_k}, with default change cutoff value {cutoff}')
 
         fig = plt.subplots(figsize=(10,5))
         plt.plot(means, inertias, 'o-')
@@ -502,13 +502,28 @@ def clustering(df, max_k=10, cutoff=0.125, graph=False):
         print(f'WARNING! Clustering not registered in the dataset. For it to be done, use hyperparameter "graph=False".')
 
     else:
-        df['cluster_num'] = KMeans(n_clusters=opt_k,
-                            random_state=42,
-                            init='random').fit(df).labels_
-    
-        return df
-    
+        return opt_k
 
+
+#------ Clustering itself
+def clustering(df, clusters=None):
+    """
+    Description: performs the clustering of the data, based on estimate_kmeans() results.
+
+    Input: df (pandas DataFrame), the data to perform the clustering;
+            clusters (int), either user-defined or the results from estimate_kmeans()
+
+    Output: df (pandas DataFrame), the clustered DataFrame
+    """
+    from sklearn.cluster import KMeans
+    
+    df['cluster_num'] = KMeans(n_clusters=clusters,
+                               random_state=42,
+                               init='random').fit(df).labels_
+    
+    return df
+
+    
 #------ Clusters scatter plotting
 def plot_clusters(df, attr_1='atr', attr_2='rsi'):
     """
@@ -518,6 +533,7 @@ def plot_clusters(df, attr_1='atr', attr_2='rsi'):
             attr_1, attr_2 (str), two features from such dataset. Default to 'atr' and 'rsi', respectivelly.
     """
     import matplotlib.pyplot as plt
+    import pandas as pd
 
     # In order to dynamize the plot, the script gets the colum number from this snippet
     feats = pd.Series(df.columns)
@@ -527,12 +543,19 @@ def plot_clusters(df, attr_1='atr', attr_2='rsi'):
     ind_2 = int(feats[mask_2].index.values[0])
 
     # From the code above, runs the plot graph for each cluter
-    for i in df.cluster_num.value_counts().sort_index().index:
-        temp = df[df.cluster_num == i]
-        plt.scatter(temp.iloc[:,ind_1], temp.iloc[:,ind_2], label=f'cluster {i}')
+    try:
+        for i in df.cluster_num.value_counts().sort_index().index:
+            temp = df[df.cluster_num == i]
+            plt.scatter(temp.iloc[:,ind_1], temp.iloc[:,ind_2], label=f'cluster {i}')
+        
+        # Finally effectively prints the plot
+        plt.grid(True)
+        plt.title(f'Plotting features {str.upper(attr_1)} x {str.upper(attr_2)}')
+        plt.legend()
+        plt.show()
 
-    # Finally effectively prints the plot
-    plt.grid(True)
-    plt.title(f'Plotting features {str.upper(attr_1)} x {str.upper(attr_2)}')
-    plt.legend()
-    plt.show()
+    except Exception as e:
+        print(f'WARNING! {e}. Please check!')
+
+
+    
