@@ -219,7 +219,7 @@ def check_pairs():
         # Creates a new temp DataFrame with just the pairs
         temp = pd.concat([buy_pairs, sell_pairs], axis=1)
         temp.columns = ['Buy', 'Sell']
-        temp.drop('USDCUSDT', inplace=True)
+        #temp.drop('USDCUSDT', inplace=True)
 
         # Saves to file
         print('Creating new file...')
@@ -515,13 +515,14 @@ def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
 
 
 #------ Clustering itself
-def clustering(df, metric='rsi', clusters=None):
+def clustering(df, metric='rsi', clusters=0, means=0):
     """
     Description: performs the clustering of the data, based on estimate_kmeans() results.
 
     Input: df (pandas DataFrame), the data to perform the clustering;
             metric (str), metric to estimate the centroids. Defaults to 'rsi';
-            clusters (int), either user-defined or the results from estimate_kmeans()
+            clusters (int), either user-defined or the results from estimate_kmeans();
+            init (int), 0 (k-means++), 1 (centroids) or 2 (random). Defaults to 0.
 
     Output: df (pandas DataFrame), the clustered DataFrame
     """
@@ -534,17 +535,36 @@ def clustering(df, metric='rsi', clusters=None):
     feat = int(num)
 
     # Set target values
-    target_values = [30, 45, 55, 70]
+    target_values = []
+    for num in range(1, clusters+1):
+        temp = int(num * np.quantile(range(0, 101), 1/(clusters+1)))
+        target_values.append(temp)    
 
     # Calculate centroids
     centroids = np.zeros((len(target_values), len(df.columns)))
     centroids[:, feat] = target_values
     
-    df['cluster_num'] = KMeans(n_clusters=clusters,
-                               random_state=1,
-                               init='random').fit(df).labels_
+    if means == 0:
+        df['cluster_num'] = KMeans(n_clusters=clusters,
+                                   random_state=1,
+                                   init='k-means++').fit(df).labels_
+        return df
     
-    return df
+    elif means == 1:
+        df['cluster_num'] = KMeans(n_clusters=clusters,
+                                   random_state=1,
+                                   init=centroids).fit(df).labels_
+        return df
+
+    elif means == 2:
+        df['cluster_num'] = KMeans(n_clusters=clusters,
+                                   random_state=1,
+                                   init='random').fit(df).labels_
+        return df
+    
+    else:
+        print('"init" argument MUST be 0 (k-means++), 1 (centroids) or 2 (random)')
+    
 
     
 #------ Clusters scatter plotting
