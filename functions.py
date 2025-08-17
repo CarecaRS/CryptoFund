@@ -392,13 +392,14 @@ def fetch_data(days=30, interval='1d'):
 
 
 #------ Indicators function
-def estimate_indicators(df, rsi=20, bbands=20, roll=13):
+def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False):
     """
     Description: gets the data from the web and calculates its indicators
 
     Input:  rsi (int), time window for the RSI indicator. Defaults to 20;
             bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
-            roll (int), rolling window for moving average. Defaults to 13.
+            roll (int), rolling window for moving average. Defaults to 13;
+            resample (bool), if set to True perform a 2-week resampling. Defaults to False.
     """
     import pandas as pd
     import pandas_ta
@@ -431,16 +432,19 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13):
     # Dollar volume (based on closing price), divided by 1mil
     df['dollar_vol'] = df['volume']*df['close']/1e6
 
-    print('Aggregating data to bi-weekly periods, filtering best cryptos.')
-    # Aggregate to bi-weekly level and filter N most market capped cryptos
-    indicators = [c for c in df.columns.unique() if c not in ['dollar_vol', 'open', 'high', 'low', 'volume']]
-    p_dvol = df.unstack(level=0)['dollar_vol'].resample('2W').mean().stack('asset').to_frame('dollar_vol')
-    p_indc = df.unstack(level=0)[indicators].resample('2W').last().stack('asset', future_stack=True)
-    df = pd.concat([p_dvol, p_indc], axis=1).dropna()
+    if resample == True:
+        print('Aggregating data to bi-weekly periods, filtering best cryptos.')
+        # Aggregate to bi-weekly level and filter N most market capped cryptos
+        indicators = [c for c in df.columns.unique() if c not in ['dollar_vol', 'open', 'high', 'low', 'volume']]
+        p_dvol = df.unstack(level=0)['dollar_vol'].resample('2W').mean().stack('asset').to_frame('dollar_vol')
+        p_indc = df.unstack(level=0)[indicators].resample('2W').last().stack('asset', future_stack=True)
+        df = pd.concat([p_dvol, p_indc], axis=1).dropna()
+    else:
+        pass
 
     print('Creating dollar volume moving averages.')
     # 13-week moving average of dollar volume for each asset
-    df['dollar_vol'] = df['dollar_vol'].unstack('asset').rolling(roll).mean().stack()
+    df['dollar_vol_roll'] = df['dollar_vol'].unstack('asset').rolling(roll).mean().stack()
 
     print('Checking cryptos liquidity.')
     # Bi-weekly rank for each asset by dollar volume (a.k.a. liquidity), smaller rank is better (most liquid)
@@ -473,6 +477,7 @@ def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
     """
     from sklearn.cluster import KMeans
     import pandas as pd
+    import numpy as np
     
     # Creates empty lists to store mean and intertia values
     means = []
@@ -491,28 +496,34 @@ def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
 
     # Checks which inertias are under the cutoff value and defines the best k under this assumption
     mask = (calc.Inertia / calc.Inertia[0]) < cutoff
-    opt_k = int(calc[mask].Means.min())
+    try:
+        opt_k = int(calc[mask].Means.min())
+    except ValueError:
+        print('"cutoff" hyperparameter set too low, resulting in NaN values. Please increase the cutoff value.')
+        
     
     # Plot the elbow graph if graph param is set to True
-    if graph == True:
-        import matplotlib.pyplot as plt
+    try:
+        if graph == True:
+            import matplotlib.pyplot as plt
 
-        if cutoff != 0.125:
-            print(f'Theoretical best k: {opt_k}, with change cutoff {cutoff}')
+            if cutoff != 0.125:
+                print(f'Theoretical best k: {opt_k}, with change cutoff {cutoff}')
+            else:
+                print(f'Theoretical best k: {opt_k}, with default change cutoff value {cutoff}')
+
+            fig = plt.subplots(figsize=(10,5))
+            plt.plot(means, inertias, 'o-')
+            plt.xlabel('Number of Clusters (k)')
+            plt.ylabel('Inertia')
+            plt.grid(True)
+            plt.show()
+            print(f'WARNING! Clustering not registered in the dataset. For it to be done, use hyperparameter "graph=False".')
+
         else:
-            print(f'Theoretical best k: {opt_k}, with default change cutoff value {cutoff}')
-
-        fig = plt.subplots(figsize=(10,5))
-        plt.plot(means, inertias, 'o-')
-        plt.xlabel('Number of Clusters (k)')
-        plt.ylabel('Inertia')
-        plt.grid(True)
-        plt.show()
-        print(f'WARNING! Clustering not registered in the dataset. For it to be done, use hyperparameter "graph=False".')
-
-    else:
-        return opt_k
-
+            return opt_k
+    except UnboundLocalError:
+        print('"cutoff" hyperparameter set too low, resulting in NaN values. No graph can be plotted.')
 
 #------ Clustering itself
 def clustering(df, metric='rsi', clusters=0, means=0):
@@ -530,11 +541,12 @@ def clustering(df, metric='rsi', clusters=0, means=0):
     from sklearn.cluster import KMeans
     import numpy as np
     
+    # Gets the column number of the metric stated in hyperparameters
     temp = pd.Series(df.columns == metric)
     num = temp[temp.index == True].index[0]
     feat = int(num)
 
-    # Set target values
+    # Set target values, using average distances from one cluster of 'metric' to another
     target_values = []
     for num in range(1, clusters+1):
         temp = int(num * np.quantile(range(0, 101), 1/(clusters+1)))
@@ -568,12 +580,12 @@ def clustering(df, metric='rsi', clusters=0, means=0):
 
     
 #------ Clusters scatter plotting
-def plot_clusters(df, attr_1='atr', attr_2='rsi'):
+def plot_clusters(df, attr_1='close_norm', attr_2='rsi'):
     """
     Description: plots a scatterplot between two features from the already clustered dataset.
 
     Input: df (pandas DataFrame), the data that passed by clustering functions already;
-            attr_1, attr_2 (str), two features from such dataset. Default to 'atr' and 'rsi', respectivelly.
+            attr_1, attr_2 (str), two features from such dataset. Default to 'close_norm' and 'rsi', respectivelly.
     """
     import matplotlib.pyplot as plt
     import pandas as pd
