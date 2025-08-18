@@ -346,16 +346,16 @@ def macd_calc(df, length=30):
 #------ Return estimation
 def estimate_returns(df):
     """
-    Definition: estimate cumulative monthly returns (up to 6m)
-    Input: DataFrame containing OHLC 'close' infos, fortnightly
+    Definition: estimate cumulative returns
+    Input: DataFrame containing OHLC 'close' infos
     Outputs: updated DataFrame
     """
     outlier = 0.005 
 
-    lags = [2, 4, 6, 8, 10, 12]
+    lags = [3, 5, 7, 10, 14, 21, 30]
 
     for time in lags:
-        df[f'return_{int(time/2)}m'] = df['close'].pct_change(time).pipe(lambda x: x.clip(lower=x.quantile(outlier), upper=x.quantile(1-outlier))).add(1).pow(1/time).sub(1)
+        df[f'return_{int(time)}d'] = df['close'].pct_change(time).pipe(lambda x: x.clip(lower=x.quantile(outlier), upper=x.quantile(1-outlier))).add(1).pow(1/time).sub(1)
 
     return df
 
@@ -444,11 +444,16 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False):
 
     print('Creating dollar volume moving averages.')
     # 13-week moving average of dollar volume for each asset
-    df['dollar_vol_roll'] = df['dollar_vol'].unstack('asset').rolling(roll).mean().stack()
+    if resample == True:
+        df['dollar_vol_roll'] = df['dollar_vol'].unstack('asset').rolling(roll).mean().stack()
+    else:
+        df['dollar_vol_sma7'] = df['dollar_vol'].unstack().stack().rolling(7).mean()
+        df['dollar_vol_sma14'] = df['dollar_vol'].unstack().stack().rolling(14).mean()
+        df['dollar_vol_sma30'] = df['dollar_vol'].unstack().stack().rolling(30).mean()
 
     print('Checking cryptos liquidity.')
     # Bi-weekly rank for each asset by dollar volume (a.k.a. liquidity), smaller rank is better (most liquid)
-    df['liquidity_lvl'] = df.groupby('time')['dollar_vol'].rank(ascending=False)
+    df['liquidity_lvl'] = df.groupby('time')['dollar_vol'].rank(ascending=False).astype(int)
 
     print('Creating a rank for the best cryptos in the dataset.')
     # Top 15 cryptos fortnightly, able to drop volume and liquidity features already
