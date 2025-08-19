@@ -18,6 +18,7 @@ Install by `pip3 install [package/package list]` or whatever way you find best. 
 - `datetime`
 - `requests`
 - `beautifulsoup4`
+- `pyportfolioopt`
 
 ### Important Note
 It seems `pandas_ta` package fails in importing `NaN` from `numpy` now (11/08/25), so you need to adjust it manually if such error is raised. This error is raised becouse nympy uses `nan` instead of `NaN`, you only need to rewrite the first lines from `pandas_ta` momentum/squeeze_pro.py to correct the writing.
