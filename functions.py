@@ -106,7 +106,6 @@ def historical_data(ticker='BTCUSDT', days=30, interval='15m'):  # the ticker in
     params = {'symbol': ticker, 'interval': interval,
           'endTime': end_timestamp, 'limit': limit,
           'startTime': start_timestamp}
-    print('Requesting informations from Binance.')
 
     # Make the request and saves it in a list. 'Dados' means 'data' in portuguese.
     dados = []
@@ -118,7 +117,6 @@ def historical_data(ticker='BTCUSDT', days=30, interval='15m'):  # the ticker in
             break
         params['startTime'] = int(klines[-1][0])+1
         time.sleep(0.1)
-    print('Request successful. Splitting data...')
 
     # Pick specific data from fetched data
     # About kline[n] pos: https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints
@@ -130,8 +128,6 @@ def historical_data(ticker='BTCUSDT', days=30, interval='15m'):  # the ticker in
     timestamps = [datetime.datetime.fromtimestamp(int(kline[0])/1000) for kline in dados]
     hist = pd.DataFrame(loose_data, columns=['open', 'high', 'low', 'close', 'volume'], index=timestamps)
     hist = pd.concat([hist], keys=[ticker], names=['asset', 'time'])
-
-    print('All done.')
 
     return hist
 
@@ -157,9 +153,9 @@ def check_pairs():
     backup_dir = 'older_versions/'
 
     #------ List with the 20 top market cap currencies
-    def top20():
+    def top25():
         """
-        Description: get the 20 biggest market cap cryptos from the web. Needs tweaks for each source.
+        Description: get the 25 biggest market cap cryptos from the web. Needs tweaks for each source.
 
         input: none
 
@@ -170,7 +166,7 @@ def check_pairs():
 
         cmc = 'https://crypto.com/price'
         
-        print('Getting list of the 20 cryptos with the most market cap.')
+        print('Getting list of the 25 cryptos with the most market cap.')
 
         try:
             response = requests.get(cmc)
@@ -187,7 +183,7 @@ def check_pairs():
         except:
             print(f"Error fetching biggest market cap cryptos from {cmc}")
         
-        return cryptos[0:20]
+        return cryptos[0:25]
 
 
     #------ Creates the buy/sell pairs from Binance endpoint
@@ -197,7 +193,7 @@ def check_pairs():
         params = {'toAsset': 'USDT'}
 
         # Fetches the Top 20 market cap cryptos from the web to make our asset basket
-        crypto_list = top20()
+        crypto_list = top25()
 
         # Makes the request
         print('Retrieving information about pairing trades from Binance.')
@@ -383,23 +379,26 @@ def fetch_data(days=30, interval='1d'):
     past_days = days
     interv = interval
 
+    print('Requesting data from Binance.')
     for asset in pairs['Sell']:
         temp = historical_data(ticker=asset, days=past_days, interval=interv)
         df = pd.concat([df, temp])
         del temp
+    print('Data downloaded.')
 
     return df
 
 
 #------ Indicators function
-def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False):
+def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False, timing='1W'):
     """
     Description: gets the data from the web and calculates its indicators
 
     Input:  rsi (int), time window for the RSI indicator. Defaults to 20;
             bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
             roll (int), rolling window for moving average. Defaults to 13;
-            resample (bool), if set to True perform a 2-week resampling. Defaults to False.
+            resample (bool), if set to True perform a 2-week resampling. Defaults to False;
+            timing (str), defines the timeframe for the resample. Defaults to 1 week.
     """
     import pandas as pd
     import pandas_ta
@@ -436,8 +435,8 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False):
         print('Aggregating data to bi-weekly periods, filtering best cryptos.')
         # Aggregate to bi-weekly level and filter N most market capped cryptos
         indicators = [c for c in df.columns.unique() if c not in ['dollar_vol', 'open', 'high', 'low', 'volume']]
-        p_dvol = df.unstack(level=0)['dollar_vol'].resample('2W').mean().stack('asset').to_frame('dollar_vol')
-        p_indc = df.unstack(level=0)[indicators].resample('2W').last().stack('asset', future_stack=True)
+        p_dvol = df.unstack(level=0)['dollar_vol'].resample(timing).mean().stack('asset').to_frame('dollar_vol')
+        p_indc = df.unstack(level=0)[indicators].resample(timing).last().stack('asset', future_stack=True)
         df = pd.concat([p_dvol, p_indc], axis=1).dropna()
     else:
         pass
@@ -457,7 +456,7 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False):
 
     print('Creating a rank for the best cryptos in the dataset.')
     # Top 15 cryptos fortnightly, able to drop volume and liquidity features already
-    mask = df['liquidity_lvl'] < 16
+    mask = df['liquidity_lvl'] < 21
     df = df.loc[mask].drop(['dollar_vol', 'liquidity_lvl'], axis=1)
 
     print('Estimating returns.')
@@ -530,6 +529,7 @@ def estimate_kmeans(data, max_k=10, cutoff=0.125, graph=False):
     except UnboundLocalError:
         print('"cutoff" hyperparameter set too low, resulting in NaN values. No graph can be plotted.')
 
+
 #------ Clustering itself
 def clustering(df, metric='rsi', clusters=0, means=0):
     """
@@ -583,7 +583,6 @@ def clustering(df, metric='rsi', clusters=0, means=0):
         print('"init" argument MUST be 0 (k-means++), 1 (centroids) or 2 (random)')
     
 
-    
 #------ Clusters scatter plotting
 def plot_clusters(df, attr_1='close_norm', attr_2='rsi'):
     """
@@ -618,4 +617,50 @@ def plot_clusters(df, attr_1='close_norm', attr_2='rsi'):
         print(f'WARNING! {e}. Please check!')
 
 
-    
+#------ Function to select assets each day based on high/low values for a given feature
+def filter_dates_and_assets(df, metric='rsi', profile='high', l_limit=47, h_limit=60):
+    """
+    Description: selects the data to perform the investments
+
+    Input:  df (pandas DataFrame), the dataframe containing the features to be used;
+            metric (str), the feature to be used in the decision-making. Defaults to 'rsi';
+            profile (str), either to use a profile consisting of upper values ('high') or lower values ('low'). Defaults to 'high';
+            l_limit (int), the lower limit of the feature to be considered. Defaults to 47;
+            h_limit (int), the higher limit of the feature to be considered. Defaults to 60.
+        
+    Outputs: df_temp (pandas DataFrame): filtered original df;
+             dates_dict (dict): dictionary containing each asset for each day of trading.
+    """
+    import pandas as pd
+
+    try:
+        print(f'Defining the chosen profile - {profile}')
+        if profile == 'high':
+            df_temp = df[df[metric] > h_limit].groupby('time').transform(lambda x: x).copy()
+        
+        elif profile == 'low':
+            df_temp = df[df[metric] < l_limit].groupby('time').transform(lambda x: x).copy()
+
+        # Reset the index
+        df_temp = df_temp.reset_index(level=0)
+
+        # Add one day to index, so the bot will buy the asset at the start of the day
+        df_temp.index = df_temp.index + pd.DateOffset(1)
+
+        # Back to multindex
+        df_temp = df_temp.reset_index().set_index(['time', 'asset']).unstack().stack()
+
+        # Get the dates from the resulting dataframe, in a list
+        dates = df_temp.index.get_level_values('time').unique().to_list()
+
+        print('Composing dates and assets...')
+        # Creates a dict with a list of assets to be bought each period
+        dates_dict = {}
+        for d in dates:
+            dates_dict[d.strftime('%Y-%m-%d')] = df_temp.xs(d, level=0).index.to_list()
+
+        print('Filtering ended successfuly.')
+        return df_temp, dates_dict
+
+    except:
+            print("ERROR! 'Profile' hyperparameter must be set to either 'high' or 'low'.")
