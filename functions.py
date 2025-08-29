@@ -348,16 +348,16 @@ def estimate_returns(df):
     """
     outlier = 0.005 
 
-    lags = [3, 5, 7, 10, 14, 21, 30]
+    lags = [1, 2, 4, 8, 12, 26, 52]
 
     for time in lags:
-        df[f'return_{int(time)}d'] = df['close'].pct_change(time).pipe(lambda x: x.clip(lower=x.quantile(outlier), upper=x.quantile(1-outlier))).add(1).pow(1/time).sub(1)
+        df[f'return_{int(time)}w'] = df['close'].pct_change(time).pipe(lambda x: x.clip(lower=x.quantile(outlier), upper=x.quantile(1-outlier))).add(1).pow(1/time).sub(1)
 
     return df
 
 
 #------ Function to fetch the data from the internet
-def fetch_data(days=30, interval='1d'):
+def fetch_data(days=30, interval='1d', pairs=None):
     """
     Description: gets the data from the web and calculates its indicators
 
@@ -367,11 +367,14 @@ def fetch_data(days=30, interval='1d'):
     import pandas as pd
     
     # First of all, fetch pairs local file in order to know what assets to perform the calculations
-    print('Checking for trading pairs...')
-    check_pairs()
-    print('Loading pairs.')
-    pairs = get_pairs()
-    print('Pairs successfully loaded.')
+    if pairs is None:
+        print('Checking for trading pairs...')
+        check_pairs()
+        print('Loading pairs.')
+        pairs = get_pairs()
+        print('Pairs successfully loaded.')
+    else:
+        pass
 
     # Then, get the historical data from Binance
     # Params
@@ -397,7 +400,7 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False, timing='
     Input:  rsi (int), time window for the RSI indicator. Defaults to 20;
             bbands (int), time window for the Bollinger Bands indicator. Defaults to 20;
             roll (int), rolling window for moving average. Defaults to 13;
-            resample (bool), if set to True perform a 2-week resampling. Defaults to False;
+            resample (bool), if set to True perform a {timing} resampling. Defaults to False;
             timing (str), defines the timeframe for the resample. Defaults to 1 week.
     """
     import pandas as pd
@@ -432,11 +435,11 @@ def estimate_indicators(df, rsi=20, bbands=20, roll=13, resample=False, timing='
     df['dollar_vol'] = df['volume']*df['close']/1e6
 
     if resample == True:
-        print('Aggregating data to bi-weekly periods, filtering best cryptos.')
+        print(f'Aggregating data to {timing} periods, filtering best cryptos.')
         # Aggregate to bi-weekly level and filter N most market capped cryptos
         indicators = [c for c in df.columns.unique() if c not in ['dollar_vol', 'open', 'high', 'low', 'volume']]
-        p_dvol = df.unstack(level=0)['dollar_vol'].resample(timing).mean().stack('asset').to_frame('dollar_vol')
-        p_indc = df.unstack(level=0)[indicators].resample(timing).last().stack('asset', future_stack=True)
+        p_dvol = df.unstack('asset')['dollar_vol'].resample(timing).mean().stack('asset').to_frame('dollar_vol')
+        p_indc = df.unstack('asset')[indicators].resample(timing).last().stack('asset', future_stack=True)
         df = pd.concat([p_dvol, p_indc], axis=1).dropna()
     else:
         pass
@@ -634,7 +637,7 @@ def filter_dates_and_assets(df, metric='rsi', profile='high', l_limit=47, h_limi
     import pandas as pd
 
     try:
-        print(f'Defining the chosen profile - {profile}')
+        print(f'Defining the chosen profile - {profile} {metric}')
         if profile == 'high':
             df_temp = df[df[metric] > h_limit].groupby('time').transform(lambda x: x).copy()
         
