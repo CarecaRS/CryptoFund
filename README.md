@@ -1,3 +1,5 @@
+### <img src="https://github.com/CarecaRS/TCC_USP/blob/master/caution.png" width="48"> This profile is no longer maintained here on GitHub, it has been migrated to [Codeberg.org](https://codeberg.org/twerminghoff/). <img src="https://github.com/CarecaRS/TCC_USP/blob/master/caution.png" width="48">
+
 # CryptoFund
 
 This is an approach to a cryptocurrencies fund (a.k.a 'The Fund') using Binance as the exchange and an user-defined number of assets to invest in, based on the top 20 crypto pairs traded over Binance, using exclusively Python (version 3.13.3 at the time of this writing). The 'top 20' classification is based on the biggest market cap assets, get from anywhere over the internet (current script fetches from crypto.com). The Fund will have two different strategies: (1) passive, trade on 1st of each month, keep in basket the 10 cryptos with the most market cap; (2) active, trade every week based on predicted returns for the following week.
